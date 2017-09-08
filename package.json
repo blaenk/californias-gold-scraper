@@ -1,0 +1,16 @@
+{
+  "name": "californias-gold-scraper",
+  "version": "0.0.1",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.2",
+    "feedparser": "^2.2.1",
+    "humanize-plus": "^1.8.2",
+    "minimist": "^1.2.0",
+    "request": "^2.81.0",
+    "request-promise-native": "^1.0.4",
+    "sanitize-filename": "^1.6.1",
+    "ssl-root-cas": "^1.2.3"
+  }
+}
