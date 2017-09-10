@@ -1,5 +1,7 @@
 /* eslint-disable no-console */
 
+require('dotenv').config();
+
 const child_process = require('child_process');
 const fs = require('fs');
 
@@ -16,30 +18,75 @@ const cheerio = require('cheerio');
 
 const humanize = require('humanize-plus');
 const sanitize = require("sanitize-filename");
+const FuzzySet = require('fuzzyset.js');
 
-let CACHE = {};
+const shellEscape = require('shell-escape');
 
-const SHOWS = [
-  'alaska-week',
-  'california-missions',
-  'californias-communities',
-  'californias-gold',
-  'californias-golden-coast',
-  'californias-golden-fairs',
-  'californias-golden-parks',
-  'californias-green',
-  'californias-water',
-  'crossroads',
-  'downtown',
-  'our-neighborhoods',
-  'palm-springs-week',
-  'road-trip',
-  'specials',
-  'the-bench',
-  'visiting',
-];
+const TVDB = require('node-tvdb');
+const tvdb = new TVDB(process.env.TVDB_KEY);
 
-const SHOW_FEED_URLS = {};
+let CACHE = {
+  tvdb: {},
+  pages: {},
+};
+
+const SHOWS = {
+  'alaska-week': {
+    name: 'Alaska Week',
+  },
+  'california-missions': {
+    name: 'California Missions',
+  },
+  'californias-communities': {
+    name: "California's Communities",
+  },
+  'californias-gold': {
+    name: "California's Gold",
+    tvdb_id: 279999,
+  },
+  'californias-golden-coast': {
+    name: "California's Golden Coast",
+    tvdb_id: 282164,
+  },
+  'californias-golden-fairs': {
+    name: "California's Golden Fairs",
+    tvdb_id: 281267,
+  },
+  'californias-golden-parks': {
+    name: "California's Golden Parks",
+    tvdb_id: 282166,
+  },
+  'californias-green': {
+    name: "California's Green",
+  },
+  'californias-water': {
+    name: "California's Water",
+  },
+  'crossroads': {
+    name: 'Crossroads',
+  },
+  'downtown': {
+    name: 'Downtown',
+  },
+  'our-neighborhoods': {
+    name: 'Our Neighborhoods',
+  },
+  'palm-springs-week': {
+    name: 'Palm Springs Week',
+  },
+  'road-trip': {
+    name: 'Road Trip',
+  },
+  'specials': {
+    name: 'Specials',
+  },
+  'the-bench': {
+    name: 'The Bench',
+  },
+  'visiting': {
+    name: 'Visiting',
+  },
+};
 
 const cacheContents = fs.readFileSync('cache.json');
 
@@ -56,10 +103,10 @@ function feedPageUrl(feedUrl, pageNumber) {
 }
 
 function createFeedUrlForShow(showName) {
-  SHOW_FEED_URLS[showName] = categoryFeedUrl(showName);
+  SHOWS[showName].feedUrl = categoryFeedUrl(showName);
 }
 
-for (const show of SHOWS) {
+for (const show of Object.keys(SHOWS)) {
   createFeedUrlForShow(show);
 }
 
@@ -219,8 +266,8 @@ async function getVideosFromIframe(title, pageUrl, sourceUrl) {
  * @throws {String} If selectors find nothing.
  */
 async function getPageVideos(pageUrl) {
-  if (pageUrl in CACHE) {
-    return CACHE[pageUrl];
+  if (pageUrl in CACHE.pages) {
+    return CACHE.pages[pageUrl];
   }
 
   const response = await promisedRequest(pageUrl);
@@ -235,7 +282,7 @@ async function getPageVideos(pageUrl) {
 
     const page = await getVideosFromIframe(title, pageUrl, iframeUrl);
 
-    CACHE[pageUrl] = page;
+    CACHE.pages[pageUrl] = page;
 
     return page;
   } else if ($iframes.length > 1) {
@@ -248,7 +295,7 @@ async function getPageVideos(pageUrl) {
 
       const page = await getVideosFromJWPlayer(title, pageUrl, jwPlayerUrl);
 
-      CACHE[pageUrl] = page;
+      CACHE.pages[pageUrl] = page;
 
       return page;
     } else if ($jwVideo.length > 1) {
@@ -259,31 +306,105 @@ async function getPageVideos(pageUrl) {
   }
 }
 
+async function getTVDBEpisodes(seasonId) {
+  if (CACHE.tvdb[seasonId]) {
+    return CACHE.tvdb[seasonId];
+  } else {
+    const response = await tvdb.getEpisodesBySeriesId(seasonId);
+
+    CACHE.tvdb[seasonId] = response;
+
+    return response;
+  }
+}
+
+function episodePadding(number) {
+  return (number < 10) ? ('0' + number) : number;
+}
+
+async function renameEpisode(page) {
+  const showName = SHOWS[page.show].name;
+
+  const outputPath = 'videos/' + page.show + '/';
+  const normalizedQuotes = page.title.replace(/’/g, "'");
+  const showNamePattern = new RegExp(" ?[-–—] ?" + showName + '( \\(\\d+\\))?');
+  let episodeName = normalizedQuotes.replace(showNamePattern, '');
+
+  const show = showName.replace(/ /g, '.');
+
+  let episodeNumber = '.';
+
+  if (SHOWS[page.show].tvdb_id) {
+    const episodes = await getTVDBEpisodes(SHOWS[page.show].tvdb_id);
+
+    if (!SHOWS[page.show].fuzzyset) {
+      SHOWS[page.show].fuzzyset = FuzzySet(episodes.map((e) => e.episodeName));
+    }
+
+    const fuzzyMatch = SHOWS[page.show].fuzzyset.get(episodeName);
+
+    if (fuzzyMatch) {
+      const firstMatch = fuzzyMatch[0];
+
+      let match;
+
+      if (firstMatch[0] < 0.7) {
+        // Low confidence; attempt simple prefix match.
+        match = episodes.find((e) => e.episodeName.startsWith(episodeName));
+      } else {
+        const matchName = firstMatch[1];
+        match = episodes.find((e) => e.episodeName == matchName);
+      }
+
+      if (match) {
+        episodeName = match.episodeName;
+
+        const season = episodePadding(match.airedSeason);
+        const episode = episodePadding(match.airedEpisodeNumber);
+
+        episodeNumber = `.S${season}E${episode}.`;
+      } else {
+        console.log("Couldn't find a matching episode for " + episodeName);
+      }
+    } else {
+      console.log("Couldn't find a matching episode for " + episodeName);
+    }
+  }
+
+  episodeName = episodeName.replace(/ /g, '.');
+  const fileName = sanitize(show + episodeNumber + episodeName);
+
+  const joined = outputPath + fileName + '.mp4';
+
+  return joined;
+}
+
 /**
  * Format the appropriate wget parameters.
  * @param {Object} page - The page object.
  * @returns {String[]} The wget parameters.
  */
+// eslint-disable-next-line no-unused-vars
 function formatWgetParameters(page) {
   const quality = 'HD' in page.videos ? 'HD' : 'SD';
   const video = page.videos[quality];
 
-  const bareName = page.title.replace(/ ?[-–—] ?California’s Gold/, " - California's Gold");
-  const title = bareName.replace(/’/, "'");
-  const sanitized = sanitize(title);
+  return [video.src, '--no-check-certificate', '-nc', '-O', page.renamed];
+}
 
-  const fileName = `videos/${sanitized}.mp4`;
+function formatCurlParameters(page) {
+  const quality = 'HD' in page.videos ? 'HD' : 'SD';
+  const video = page.videos[quality];
 
-  return [video.src, '--no-check-certificate', '-nc', '-O', fileName];
+  return [video.src, '--create-dirs', '-k', '-o', page.renamed];
 }
 
 /**
  * Invoke wget to download the highest-quality video from the given page object.
  * @param {Object} page - The page object.
  */
-// eslint-disable-next-line no-unused-vars
 function downloadVideos(page) {
-  const args = formatWgetParameters(page);
+  const args = formatCurlParameters(page);
 
   const fileName = args[args.length - 1];
 
@@ -292,9 +413,9 @@ function downloadVideos(page) {
     return;
   }
 
-  console.log('wget ' + args.join(' '));
+  console.log('curl ' + args.join(' '));
 
-  child_process.spawnSync('wget', args, {
+  child_process.spawnSync('curl', args, {
     stdio: 'inherit',
   });
 }
@@ -308,7 +429,7 @@ function downloadVideos(page) {
 function getFeedPageLinks(showName, pageNumber) {
   const links = [];
 
-  const url = feedPageUrl(SHOW_FEED_URLS[showName], pageNumber);
+  const url = feedPageUrl(SHOWS[showName].feedUrl, pageNumber);
 
   return new Promise((resolve, reject) => {
     request(url)
@@ -358,10 +479,13 @@ async function crawlCategory(showName) {
         let page;
 
         page = await getPageVideos(link);
+        page.show = showName;
 
         const quality = 'HD' in page.videos ? 'HD' : 'SD';
 
-        console.log(`Adding ${page.title}: ${humanize.fileSize(page.videos[quality].size)}`);
+        page.renamed = await renameEpisode(page);
+
+        console.log(`Adding ${page.renamed}: ${humanize.fileSize(page.videos[quality].size)}`);
         totalSize += page.videos[quality].size;
 
         videos.push(page);
@@ -379,27 +503,9 @@ async function crawlCategory(showName) {
 
   console.log(`Total size: ${humanize.fileSize(totalSize)}`);
 
-  // Sort videos by episode number.
-  videos.sort((a, b) => {
-    const aMatch = a.title.match(/\((\d+\))$/);
-    const bMatch = b.title.match(/\((\d+\))$/);
-
-    // If an episode doesn't have an episode number, make it come before.
-    if (!aMatch) {
-      return -1;
-    }
-
-    if (!bMatch) {
-      return 1;
-    }
-
-    const aNumber = parseInt(aMatch[1]);
-    const bNumber = parseInt(bMatch[1]);
-
-    return aNumber - bNumber;
+  const commands = videos.map((page) => {
+    return 'curl ' + shellEscape(formatCurlParameters(page));
   });
-
-  const commands = videos.map((page) => 'wget ' + formatWgetParameters(page).join(' '));
 
   fs.writeFileSync(`download-${showName}.sh`, commands.join("\n"));
 }
