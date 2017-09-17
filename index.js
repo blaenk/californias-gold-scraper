@@ -513,6 +513,8 @@ async function crawlCategory(showName) {
 
   console.log(`Total size: ${humanize.fileSize(totalSize)}`);
 
+  videos.sort((a, b) => a.renamed.localeCompare(b.renamed));
+
   const commands = ['set -e'];
 
   for (const [index, page] of videos.entries()) {
