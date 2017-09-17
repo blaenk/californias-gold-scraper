@@ -371,8 +371,9 @@ async function renameEpisode(page) {
     }
   }
 
-  episodeName = episodeName.replace(/ /g, '.');
-  const fileName = sanitize(show + episodeNumber + episodeName);
+  episodeName = episodeName.replace(/ /g, '.').replace(/'/g, '').replace(/&/g, 'and');
+
+  const fileName = sanitize(show.replace(/'/g, '') + episodeNumber + episodeName);
 
   const joined = outputPath + fileName + '.mp4';
 
