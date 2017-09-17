@@ -342,10 +342,14 @@ async function renameEpisode(page) {
   let episodeNumber = '.';
 
   if (SHOWS[page.show].tvdb_id) {
-    const episodes = await getTVDBEpisodes(SHOWS[page.show].tvdb_id);
+    let episodes = await getTVDBEpisodes(SHOWS[page.show].tvdb_id);
+
+    episodes = episodes.filter((e) => e.episodeName);
 
     if (!SHOWS[page.show].fuzzyset) {
-      SHOWS[page.show].fuzzyset = FuzzySet(episodes.map((e) => e.episodeName));
+      const episodeNames = episodes.map((e) => e.episodeName);
+
+      SHOWS[page.show].fuzzyset = FuzzySet(episodeNames);
     }
 
     const fuzzyMatch = SHOWS[page.show].fuzzyset.get(episodeName);
