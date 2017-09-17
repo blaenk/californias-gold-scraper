@@ -502,6 +502,8 @@ async function crawlCategory(showName) {
     }
   }
 
+  fs.writeFileSync('cache.json', JSON.stringify(CACHE));
+
   console.log(`Total size: ${humanize.fileSize(totalSize)}`);
 
   const commands = videos.map((page) => {
@@ -518,8 +520,6 @@ if ('show' in params) {
 
   (async function() {
     await crawlCategory(showName);
-
-    fs.writeFileSync('cache.json', JSON.stringify(CACHE));
   })();
 
 } else if ('single' in params) {
