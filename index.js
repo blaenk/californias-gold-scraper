@@ -4,6 +4,7 @@ require('dotenv').config();
 
 const child_process = require('child_process');
 const fs = require('fs');
+const path = require('path');
 
 const rootCas = require('ssl-root-cas/latest').create();
 require('https').globalAgent.options.ca = rootCas;
@@ -246,12 +247,18 @@ async function getVideosFromIframe(title, pageUrl, sourceUrl) {
     };
   }).get();
 
+  let subtitles = $('video > track').map((_index, element) => element.attribs.src).get();
+
   const page = {
     pageUrl,
     sourceUrl,
     title,
     videos: {},
   };
+
+  if (subtitles) {
+    page.subtitles = subtitles[0];
+  }
 
   await getIframeVideosOfQuality(videoAttributes, sourceUrl, page, 'SD');
   await getIframeVideosOfQuality(videoAttributes, sourceUrl, page, 'HD');
@@ -506,9 +513,39 @@ async function crawlCategory(showName) {
 
   console.log(`Total size: ${humanize.fileSize(totalSize)}`);
 
-  const commands = videos.map((page) => {
-    return 'curl ' + shellEscape(formatCurlParameters(page));
-  });
+  const commands = ['set -e'];
+
+  for (const [index, page] of videos.entries()) {
+    commands.push(`echo "[${index + 1}/${videos.length}]: ${path.basename(page.renamed)}"`);
+
+    if (page.subtitles) {
+      const quality = 'HD' in page.videos ? 'HD' : 'SD';
+      const video = page.videos[quality];
+
+      const ffmpegArguments = [
+        '-hide_banner',
+        '-n',
+        '-i', video.src,
+        '-fix_sub_duration',
+        '-i', page.subtitles,
+        '-map', '0:v',
+        '-map', '0:a',
+        '-c', 'copy',
+        '-map', '1',
+        '-c:s:0', 'mov_text',
+        '-metadata:s:s:0', 'language=eng',
+        '-disposition:s:0', 'default',
+        '-metadata:s:v:0', 'handler=English',
+        '-metadata:s:a:0', 'handler=English',
+        '-metadata:s:s:0', 'handler=English',
+        page.renamed,
+      ];
+
+      commands.push('ffmpeg ' + shellEscape(ffmpegArguments));
+    } else {
+      commands.push('curl ' + shellEscape(formatCurlParameters(page)));
+    }
+  }
 
   fs.writeFileSync(`download-${showName}.sh`, commands.join("\n"));
 }
