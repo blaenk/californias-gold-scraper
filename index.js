@@ -361,6 +361,8 @@ async function renameEpisode(page) {
 
       if (firstMatch[0] < 0.7) {
         // Low confidence; attempt simple prefix match.
+        console.log('Low confidence for ' + episodeName);
+
         match = episodes.find((e) => e.episodeName.startsWith(episodeName));
       } else {
         const matchName = firstMatch[1];
@@ -368,6 +370,8 @@ async function renameEpisode(page) {
       }
 
       if (match) {
+        console.log(`Matched: ${episodeName} → ${match.episodeName}`);
+
         episodeName = match.episodeName;
 
         const season = episodePadding(match.airedSeason);
